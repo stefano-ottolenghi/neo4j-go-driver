@@ -55,9 +55,9 @@ func ExampleExecuteQuery_selfCausalConsistency() {
 		ctx, myDriver, query, params, EagerResultTransformer, ExecuteQueryWithWritersRouting())
 	handleError(err)
 
-	// assuming an initial empty database, the following query should return 1
-	// indeed, causal consistency is guaranteed by default, which subsequent ExecuteQuery calls can read the writes of
-	// previous ExecuteQuery calls targeting the same database
+	// Assuming an initial empty database, the following query returns 1.
+	// Indeed, causal consistency is guaranteed by default, which means that subsequent ExecuteQuery
+	// calls can read the writes of previous ExecuteQuery calls targeting the same database
 	query = "MATCH (n:Example) RETURN count(n) AS count"
 	eagerResult, err := ExecuteQuery[*EagerResult](
 		ctx, myDriver, query, nil, EagerResultTransformer, ExecuteQueryWithReadersRouting())

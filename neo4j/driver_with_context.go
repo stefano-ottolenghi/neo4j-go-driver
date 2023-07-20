@@ -428,89 +428,93 @@ func (d *driverWithContext) VerifyAuthentication(ctx context.Context, auth *Auth
 //
 //	result, err := ExecuteQuery[*EagerResult](ctx, driver, query, params, EagerResultTransformer)
 //
-// Passing a nil ResultTransformer function is invalid and will return an error.
-//
-// Likewise, passing a function that returns a nil ResultTransformer is invalid and will return an error.
+// Passing nil as [ResultTransformer] function is invalid and returns an error.
+// Likewise, passing a [ResultTransformer] function that returns nil is invalid and returns an error.
 //
 // ExecuteQuery runs the query in a single explicit, retryable transaction within a session entirely managed by
 // the driver.
+// Retries occur in the same conditions as when calling [SessionWithContext.ExecuteRead] and
+// [SessionWithContext.ExecuteWrite].
+// Because the transaction is explicit, Cypher queries using "CALL {} IN TRANSACTIONS"
+// or the older "USING PERIODIC COMMIT" construct will not work (use [SessionWithContext.Run] for these).
 //
-// Retries occur in the same conditions as when calling SessionWithContext.ExecuteRead and
-// SessionWithContext.ExecuteWrite.
+// # Configuration
 //
-// Because it is an explicit transaction from the server point of view, Cypher queries using
-// "CALL {} IN TRANSACTIONS" or the older "USING PERIODIC COMMIT" construct will not work (call
-// SessionWithContext.Run for these).
+// Specific settings can be configured via configuration callbacks editing the [ExecuteQueryConfiguration] struct. Built-in callbacks are provided, such as:
 //
-// Specific settings can be configured via configuration callbacks. Built-in callbacks are provided such as:
-//
-//		neo4j.ExecuteQueryWithDatabase
-//		neo4j.ExecuteQueryWithWritersRouting
+//	neo4j.ExecuteQueryWithDatabase
+//	neo4j.ExecuteQueryWithReadersRouting
 //	 ...
 //
-// see neo4j.ExecuteQueryConfiguration for all possibilities.
+// see [ExecuteQueryConfigurationOption] for all built-in callbacks.
 //
 // These built-in callbacks can be used and combined as follows:
 //
 //	ExecuteQuery[T](ctx, driver, query, params, transformerFunc,
 //		neo4j.ExecuteQueryWithDatabase("my-db"),
-//		neo4j.ExecuteQueryWithWritersRouting())
+//		neo4j.ExecuteQueryWithReadersRouting())
 //
 // For complete control over the configuration, you can also define your own callback:
 //
 //	ExecuteQuery[T](ctx, driver, query, params, transformerFunc, func(config *neo4j.ExecuteQueryConfiguration) {
 //		config.Database = "my-db"
-//		config.RoutingControl = neo4j.Write
-//		config.ImpersonatedUser = "selda_bağcan"
+//		config.RoutingControl = neo4j.Read
+//		config.ImpersonatedUser = "smith"
 //	})
 //
-// ExecuteQuery causal consistency is guaranteed by default across different successful calls to ExecuteQuery
+// # Causal consistency
+//
+// ExecuteQuery causal consistency is guaranteed by default across different calls to ExecuteQuery
 // targeting the same database.
 // In other words, a successful read query run by ExecuteQuery is guaranteed to be able to read results created
 // from a previous successful write query run by ExecuteQuery on the same database.
-// This is achieved through the use of bookmarks, managed by a default neo4j.BookmarkManager instance.
-// This default BookmarkManager instance can be retrieved with DriverWithContext.DefaultExecuteQueryBookmarkManager.
+// This is achieved through the use of bookmarks, managed by a default [BookmarkManager] instance
+// which can be retrieved with [DriverWithContext.ExecuteQueryBookmarkManager].
+//
 // Such a consistency guarantee is *not* maintained between ExecuteQuery calls and the lower-level
-// neo4j.SessionWithContext API calls, unless sessions are explicitly configured with the same bookmark manager.
-// That guarantee may also break if a custom implementation of neo4j.BookmarkManager is provided via for instance
-// the built-in callback neo4j.ExecuteQueryWithBookmarkManager.
-// You can disable bookmark management by passing the neo4j.ExecuteQueryWithoutBookmarkManager callback to ExecuteQuery.
+// [SessionWithContext] API calls, unless sessions are explicitly configured with the same bookmark manager.
+// That guarantee may also break if a different bookmark manager is provided to ExecuteQuery calls
+// (for instance via the built-in callback [ExecuteQueryWithBookmarkManager]).
+// You can disable bookmark management with the [ExecuteQueryWithoutBookmarkManager] configuration callback.
+//
+// # Comparison with the Session API
 //
 // The equivalent functionality of ExecuteQuery can be replicated with pre-existing APIs as follows:
 //
-//	 // all the error handling bits have been omitted for brevity (do not do this in production!)
-//		session := driver.NewSession(ctx, neo4j.SessionConfig{
-//			DatabaseName:     "<DATABASE>",
-//			ImpersonatedUser: "<USER>",
-//			BookmarkManager:  bookmarkManager,
-//		})
-//		defer handleClose(ctx, session)
-//		// session.ExecuteRead is called if the routing is set to neo4j.Read
-//		result, _ := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-//			result, _ := tx.Run(ctx, "<CYPHER>", parameters)
-//			records, _ := result.Collect(ctx) // real implementation does not use Collect
-//			keys, _ := result.Keys()
-//			summary, _ := result.Consume(ctx)
-//			return &neo4j.EagerResult{
-//				Keys:    keys,
-//				Records: records,
-//				Summary: summary,
-//			}, nil
-//		})
-//		eagerResult := result.(*neo4j.EagerResult)
-//		// do something with eagerResult
+//	// all the error handling bits have been omitted for brevity (do not do this in production!)
+//	session := driver.NewSession(ctx, neo4j.SessionConfig{
+//		DatabaseName:     "<DATABASE>",
+//		ImpersonatedUser: "<USER>",
+//		BookmarkManager:  bookmarkManager,
+//	})
+//	defer session.Close(ctx)
+//	// session.ExecuteRead is called if the routing is set to neo4j.Read
+//	result, _ := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+//		result, _ := tx.Run(ctx, "<CYPHER>", parameters)
+//		records, _ := result.Collect(ctx) // real implementation does not use Collect
+//		keys, _ := result.Keys()
+//		summary, _ := result.Consume(ctx)
+//		return &neo4j.EagerResult{
+//			Keys:    keys,
+//			Records: records,
+//			Summary: summary,
+//		}, nil
+//	})
+//	eagerResult := result.(*neo4j.EagerResult)
+//	// do something with eagerResult
 //
-// The available ResultTransformer implementation, EagerResultTransformer, computes an *EagerResult.
-// As the latter's name suggests, this is not optimal when the result is made from a large number of records.
-// In that situation, it is advised to create a custom implementation of ResultTransformer APIs, which do not require
-// keeping all records in memory.
+// # Result transformation
 //
-// The provided ResultTransformer function may be called several times since ExecuteQuery relies on transaction
+// The available [ResultTransformer] implementation, [EagerResultTransformer], computes an *[EagerResult].
+// As the name suggests, the transformer retrieves all records at once, which makes it a sub-optimal
+// choice when the result is composed of a large number of records.
+// In that situation, it is advised to create a custom implementation of [ResultTransformer], which does not require
+// to keep all records in memory (or using [SessionWithContext.ExecuteRead]/[SessionWithContext.ExecuteWrite]).
+//
+// The driver may call the provided [ResultTransformer] function several times, as ExecuteQuery relies on transaction
 // functions.
-// Since ResultTransformer implementations are inherently stateful, the function must return a new ResultTransformer
+// Since [ResultTransformer] implementations are inherently stateful, the function must return a new [ResultTransformer]
 // instance every time it is called.
-//
-// Contexts terminating too early negatively affect connection pooling and degrade the driver performance.
 func ExecuteQuery[T any](
 	ctx context.Context,
 	driver DriverWithContext,
